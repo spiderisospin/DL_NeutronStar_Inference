@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# hey, im creating the data generator part here. The function comments are still kind of vague, but thats because im trying to make a general sketch of whats going on, before polishing it. let me know if u have improvements
-
 # In[4]:
 
 
@@ -97,7 +95,21 @@ cs_test = cs_test.values
 
 
 def find_pos(matrix, val, col):
-  """ """
+  """
+  Find element index in a matrix column closest to a specific value.
+  
+  Parameters:
+      matrix: ndarray
+          2D array with data
+      val: float         
+          Value to find in column.
+      col: int
+          Column index of matrix where search is done.
+      
+  Returns:
+      int
+          Row index of element which value in column is closest to target.
+  """
   col_data = matrix[:, col]
   for i in range(len(col_data) - 1):
     dx1 = abs(col_data[i] - val)
@@ -109,19 +121,50 @@ def find_pos(matrix, val, col):
       else:
         return i+1
 
-def deriv(eos, max_idx):
-  """s = dp/deps up to max_idx """
+def deriv(eos, max_i):
+  """Compute the derivative of the EOS up to an index max_i.
+  
+  Parameters:
+      eos: ndarray
+          2D array with EOS data, with columns being parameters.
+      max_i: int           
+          Index for which we compute derivative up to.
+
+  Returns:
+      s: float
+          Derivative of pressure with respect to the energy density.
+  """
   s = 0
-  for i in range(max_idx):
+  for i in range(max_i):
     dp = eos[i+1,0] - eos[i,0]
     deps = eos[i+1,1] - eos[i,1]
     s = dp / deps
   return s
 
-def cs_interpolate(eos, max_idx, p1, matrix_rho, matrix_cs, ds):
-  """ """
+def cs_interpolate(eos, max_i, p1, matrix_rho, matrix_cs, ds):
+  """ 
+  Create linear interpolation for speed of sound c_s for 7 points.
+  
+  Parameters:
+      eos: ndarray
+          Equation of state.
+      max_i: int
+          Index for which EOS interpolation starts.
+      p1: float
+          pressure at first interpolation point
+      matrix_rho: ndarray
+          Matrix with density data.
+      matrix_cs: ndarray
+          Matrix with speed of sound data.
+      ds: int
+          Row index which selects interval of rho and speed of sound values.
+
+  Returns
+      cs_interpolation
+          Function which interpolates the speed of sound given datasets.
+  """
   segment_mat = []
-  segment_mat.append([eos[max_idx, 2], np.sqrt(p1)])
+  segment_mat.append([eos[max_i, 2], np.sqrt(p1)])
 
   for i in range(7):
     segment_mat.append([matrix_rho[ds, i], matrix_cs[ds, i]])
@@ -131,12 +174,34 @@ def cs_interpolate(eos, max_idx, p1, matrix_rho, matrix_cs, ds):
 
   return cs_interpolation
 
-def EOS_HE(he_eos, eos, max_idx, cs_interpolation, rho_final):
+def EOS_HE(he_eos, eos, max_i, cs_interpolation, rho_final):
+  """
+  Extend the EOS table to higher densities by interpolation speed of sound. Starting from the 
+  maximum index, increase the density and update energy density and pressure, using the 
+  speed of sound interpolations. These new rows are appended to the dataset until we arrive 
+  at the final density node.
+
+  Parameters
+      he_eos: ndarray
+          EOS array which we will increase with data.
+      eos: ndarray
+          EOS table which initial data are obtained from.
+      max_i: int
+          Index from which we start in the EOS row.
+      cs_interpolation: function
+          Function returning speed of sound with respect to density.
+      rho_final: float
+          Final density up to which we determine EOS.
+
+  Returns
+      he_eos: ndarray
+          EOS array which is enlargened.
+  """
   drho = 1e-5
 
-  M = int((1e-3 - eos[max_idx, 2])/1e-5) + int((1e-2 - 1e-3)/1e-4) + int((rho_final - 1e-2)/1e-3)
+  M = int((1e-3 - eos[max_i, 2])/1e-5) + int((1e-2 - 1e-3)/1e-4) + int((rho_final - 1e-2)/1e-3)
 
-  p_last, eps_last, rho_last = eos[max_idx,0], eos[max_idx,1], eos[max_idx,2]
+  p_last, eps_last, rho_last = eos[max_i,0], eos[max_i,1], eos[max_i,2]
 
   for i in range(M-1):
     p_next = p_last + cs_interpolation(rho_last)**2 * drho * (eps_last + p_last)/rho_last
@@ -146,7 +211,7 @@ def EOS_HE(he_eos, eos, max_idx, cs_interpolation, rho_final):
     if rho_next > rho_final:
       break
 
-    #append row
+    #add row
     he_eos = np.vstack([he_eos, [p_next, eps_next, rho_next]])
 
     p_last, eps_last, rho_last = p_next, eps_next, rho_next
@@ -162,18 +227,60 @@ def EOS_HE(he_eos, eos, max_idx, cs_interpolation, rho_final):
 
   return he_eos
 
-def mergeEOS(eos_mat, he_eos, eos, max_idx):
-  eos_mat = np.vstack([eos_mat, eos[:max_idx+1,:]])#vstack is better than the loops
+def mergeEOS(eos_mat, he_eos, eos, max_i):
+  """
+  Add new data to original EOS matrix.
+
+  Parameters
+      eos_mat: ndarray
+          Array which stores the total EOS.
+      he_eos: ndarray
+          Extension of EOS with new rows.
+      eos: ndarray
+          Initial EOS data table.
+      max_i: int
+          Index up to which we include rows from EOS
+
+  Returns
+      eos_mat: ndarray
+          Merged EOS array.
+  """
+  eos_mat = np.vstack([eos_mat, eos[:max_i+1,:]])#vstack is better than the loops
   eos_mat = np.vstack([eos_mat,he_eos])
   return eos_mat
 
 
-# we combine this in the following function. here we build the equation of state matrix before the lambda transition
+# We combine this in the following function. here we build the equation of state matrix before the lambda transition
 
 # In[9]:
 
 
 def build(eos_mat, eos, matrix_rho, matrix_cs, ds, rho_treshold, rho_final):
+  """
+  Create an EOS table by including higher densities to our original model. Here we find the
+  transition point, apply a speed of sound interpolation and generate the EOS extension.
+  Subsequently, we merge this with our original EOS data
+
+  Parameters
+      eos_mat: ndarray
+          Array storing final EOS.
+      eos: ndarray
+          baseline EOS data.
+      matrix_rho: ndarray
+          Matrix with base density values used for interpolation.
+      matrix_cs: ndarray
+          Matrix with speed of sound values used for interpolation.
+      ds: int 
+          Row index for which chooses which interpolation interval to use.
+      rho_treshold: float
+          Density value for which we start extending EOS.
+      rho_final: float
+          Density up to which EOS is extended.
+
+  Returns
+      eos_matrix: ndarray
+          Final EOS table including extended data.
+  """
   i = find_pos(eos, rho_treshold, 2)
   p1 = deriv(eos, i)
   cs_interpolation = cs_interpolate(eos, i, p1, matrix_rho, matrix_cs, ds)
@@ -192,12 +299,34 @@ def build(eos_mat, eos, matrix_rho, matrix_cs, ds, rho_treshold, rho_final):
 
 Lambda=0
 def eos_interpolate(x):
+  """
+  Evaluate interpolated EOS energy density.
+
+  Parameters
+      x: float
+          Value of the pressure.
+          
+  Returns
+      float
+      Energy density for pressure x
+  """
   if x < pc:
     return eps_fluid(x)
   else:
     return eps_fluid(x+Lambda)+Lambda
 
 def eos_prime_interpolate(x):
+  """
+  Find the derivative of the interpolated the EOS energy density.
+
+  Parameters
+      x: float
+          Value of the pressure.
+          
+  Returns
+      float
+      Derivative of the energy density for pressure x
+  """
   if x<pc:
     return eps_prime(x)
   else:
@@ -208,7 +337,20 @@ def eos_prime_interpolate(x):
 
 
 def tov_equations(r,u):
-  #u=[f,h,P,H,beta]
+"""
+  Compute Tolman-Oppenheimer-Volkoff (TOV) equations. We calculate how the elements
+  of u change with the radius, applying the equation of state (EOS).
+
+  Parameters
+      r: float
+          Radius.
+      u: list - [f,h,P,H,beta]
+          List containing parameters.
+
+  Returns
+      u_array: list
+          List containing the derivatives of u elements with respect to the radius.
+  """
   f, h, P, H, beta = u
 
   eps = eos_interpolate(P)
@@ -235,6 +377,18 @@ def tov_equations(r,u):
 
 
 def integrator(P0):
+  """
+  Integrate the TOV equations from the start center to the outer core. We start from an 
+  initial pressure P0 and integrate outward.
+
+  Parameters
+      P0: float
+          Core neutron star pressure
+          
+  Returns
+      solve: function
+          Solution of TOV equations using solve_ivp with the Runge-Kutta 45 method.
+  """
   def stop_surface(r,u):
     return u[2] / P0 - 1e-12
 
@@ -243,8 +397,8 @@ def integrator(P0):
 
   u0 = [f0, h0, P0, H0, beta0]
 
-  #using runge kutta method, may change
-  solve = solve_ivp(tov_equations, rspan, u0, method="RK45", max_step = 0.05,rtol = 1e-05, atol=1e-7, events=stop_surface)#max_step=5e04
+  #using runge kutta method
+  solve = solve_ivp(tov_equations, rspan, u0, method="RK45", max_step = 0.05,rtol = 1e-05, atol=1e-7, events=stop_surface)
   return solve
 
 
@@ -252,6 +406,23 @@ def integrator(P0):
 
 
 def cycle_tov(data_matrix, P0, Pf):
+  """
+  Solve the TOV equations for different initial neutron star core pressures. Here, we run the
+  TOV solver for pressure values between P0 and Pf. Subsequently, we determine our global parameters,
+  which correspond to the mass, radius and love number. We store them in data_matrix.
+
+  Parameters
+      data_matrix: ndarray
+          Storage array for our global parameters.
+      P0: float
+          Initial neutron star core pressure.
+      Pf: float
+          Final neutron star core pressure.
+          
+  Returns
+      data_matrix: ndarray
+          Storage array for our global parameters.
+  """
   if Pf > 1e-2:
     N = int(np.floor( (1e-4 - P0) / (2.5e-6) + (1e-3 - 1e-4)/(2.5e-5) + (1e-2 - 1e-3)/(2.5e-4)))
   elif Pf > 1e-3:
@@ -264,7 +435,6 @@ def cycle_tov(data_matrix, P0, Pf):
     N = 0
 
   for i in range(N):
-    #print("P0 =", P0)#remove this when code works properly
     solution = integrator(P0)
     Radius = solution.t[-1]#radius
     M = Radius / 2*(1-solution.y[0,-1])#mass
@@ -309,6 +479,30 @@ def eps_prime(x):
 
 
 def process_one_j(j, eos_name, eos_base, rho_matrix, cs_matrix, out_dir):
+    """
+    Generate and evaluate EOS candidates. Subsequently, save accepted TOV results. For the row j
+    in the candidate parameters, the function creates an EOS table from eos_base. Also, rho_matrix 
+    and cs_matrix are used to build the interpolations, solves the TOV equations for various density
+    nodes and we determine whether this data is accepted or not. Accepted results are saved in out_dir.
+
+    Parameters
+        j: int
+            Index deciding which row of our rho_matrix and cs_matrix are applied.
+        eos_name: str
+            Name of EOS used in file name.
+        eos_base: ndarray
+            baseline EOS data table
+        rho_matrix: ndarray
+            Matrix containing density values.
+        cs_matrix: ndarray
+            Matrix containing speed of sound values.
+        out_dir: str
+            Directory where we save result files in.
+
+        Returns
+        dict
+            Dictionary containing amount of values tested, amount of accepted models and list of saved file paths.
+    """
     global Lambda, eps_fluid, eps_prime
 
     z = j
@@ -370,6 +564,25 @@ def process_one_j(j, eos_name, eos_base, rho_matrix, cs_matrix, out_dir):
 
 
 def generate_tovs(eos_name, eos_base, rho_matrix, cs_matrix, out_dir, n_jobs=6):
+    """
+    Generate TOV solutions for all EOS parameter data. Here, we paralellize over n_jobs amount of CPU cores, for a more efficient
+    data generation. We run process_one_j for each row of rho_matrix. When data is accepted, these are saved in out_dir.
+    We also print information like acceptance rate to keep track of the data generation.
+
+    Parameters
+        eos_name: str
+            Name of EOS used in file names.
+        eos_base: ndarray
+            Baseline EOS data.
+        rho_matrix: ndarray
+            Matrix containing density values.
+        cs_matrix: ndarray
+            Matrix containing speed of sound values.
+        out_dir: str
+            Directory where we save result files in.
+        n_jobs : int
+            Number of CPU cores parallelized used to generate data (Check how much cores you have has before running!)
+    """
     os.makedirs(out_dir, exist_ok=True)
 
     for f in os.listdir(out_dir):
@@ -394,6 +607,32 @@ def generate_tovs(eos_name, eos_base, rho_matrix, cs_matrix, out_dir, n_jobs=6):
 
 
 def data_generator(R_rand, M_rand, data_matrix, idx_max, sigma_M, sigma_R, TOT):
+    """
+    Generate radius and mass samples from our EOS curve. Here, we interpolate the mass-radius curve from our data. Masses are sampled and 
+    radii are computed using the RM curve. Subsequently, Gaussian noise is added to those values with a standard deviation of sigma_M and sigma_R respectively.
+    We normalize these values.
+
+    Parameters
+        R_rand: ndarray
+            Array storing our radius values.
+        M_rand: ndarray
+            Array storing our mass values.
+        data_matrix: ndarray
+            Array containing EOS including mass and radius.
+        max_i: int
+            Index up to which we use data to interpolate.
+        sigma_M: float
+            Mass noise standard deviation.
+        sigma_R: float
+            Radius noise standard deviation
+        TOT: int
+            Number of samples generated.
+
+    Returns
+        R_rand, M_rand: ndarray, ndarray
+            Arrays of samples generated.
+    
+    """
     M_arr = data_matrix[:, 1]
     R_arr = data_matrix[:, 2]
 
@@ -414,6 +653,28 @@ def data_generator(R_rand, M_rand, data_matrix, idx_max, sigma_M, sigma_R, TOT):
 
 
 def generate_mr_dataset(source_dir, dataset_path, rho_matrix, cs_matrix, ns=300, TOT=30):
+    """
+    This function generates the mass-radius dataset from the data containing the solved TOV equations.
+    Here, the function reads the TOV files and generates random mass-radius samples for all files. 
+    Subsequently, these files are combined with the EOS parameters and then saved.
+
+    Parameters
+    source_dir: str
+        Directory of saved TOV files.
+    dataset_path: str
+        Path of final dataset.
+    rho_matrix: ndarray
+        Matrix containing density values.
+    cs_matrix: ndarray
+        Matrix containing speed of sound values.
+    ns: int
+        Number of samples per TOV file.
+    TOT: int
+        Amount of mass-radius points per sample.
+
+    Returns
+        None
+    """
     sigma_M = 0.1
     sigma_R = 0.5
     M_norm = 3
@@ -436,7 +697,7 @@ def generate_mr_dataset(source_dir, dataset_path, rho_matrix, cs_matrix, ns=300,
 
         rows_to_write = []
 
-        for _ in range(ns):
+        for i in range(ns):
             R_rand = np.array([])
             M_rand = np.array([])
 
@@ -465,15 +726,45 @@ def generate_mr_dataset(source_dir, dataset_path, rho_matrix, cs_matrix, ns=300,
 
 
 def data_generator_k2(R_rand, M_rand, k2_rand, data_matrix, idx_max, TOT, sigma_M, sigma_R, sigma_k2):
-    # columns in data_matrix: [P0, M, R, lambda]
+    """
+    Generate radius and mass samples from our EOS curve. Here, we interpolate the mass-radius curve from our data. Masses are sampled and 
+    radii are computed using the RM curve. Subsequently, Gaussian noise is added to those values with a standard deviation of sigma_M and sigma_R respectively.
+    We normalize these values.
+
+    Parameters
+        R_rand: ndarray
+            Array storing our radius values.
+        M_rand: ndarray
+            Array storing our mass values.
+        data_matrix: ndarray - [P0, M, R, lambda]
+            Array containing EOS including mass and radius.
+        max_i: int
+            Index up to which we use data to interpolate.
+        sigma_M: float
+            Mass noise standard deviation.
+        sigma_R: float
+            Radius noise standard deviation.
+        TOT: int
+            Number of samples generated.
+        sigma_M: float
+            Mass noise standard deviation.
+        sigma_R: float
+            Radius noise standard deviation.
+        sigma_k2: float
+            k2 noise standard deviation.
+
+    Returns
+        R_rand, M_rand: ndarray, ndarray
+            Arrays of samples generated.
+    """
     M_arr = data_matrix[:, 1]
     R_arr = data_matrix[:, 2]
     lamb_arr = data_matrix[:, 3]
 
-    # compute k2 from lambda
+    #compute k2 from lambda
     k2_arr = (3.0 / 2.0) * lamb_arr * (M_arr ** 5) / (R_arr ** 5) / (KK ** 5)
 
-    # keep stable branch up to maximum mass, deduplicate mass values
+    #keep stable branch up to maximum mass
     M_unique, idx_unique = np.unique(M_arr[:idx_max+1], return_index=True)
     R_unique = R_arr[:idx_max+1][idx_unique]
     k2_unique = k2_arr[:idx_max+1][idx_unique]
@@ -481,15 +772,15 @@ def data_generator_k2(R_rand, M_rand, k2_rand, data_matrix, idx_max, TOT, sigma_
     RM_curve = interp1d(M_unique, R_unique, kind="linear", fill_value="extrapolate")
     k2M_curve = interp1d(M_unique, k2_unique, kind="linear", fill_value="extrapolate")
 
-    # sample masses uniformly on stable branch
+    #sample masses uniformly
     M_rand = uniform.rvs(loc=M_unique[0], scale=M_unique[-1] - M_unique[0], size=TOT)
     R_rand = RM_curve(M_rand)
     k2_rand = k2M_curve(M_rand)
 
-    # inject Gaussian noise
+    #Gaussian noise injection
     M_rand = norm.rvs(loc=M_rand, scale=sigma_M) / M_norm
     R_rand = norm.rvs(loc=R_rand, scale=sigma_R) / R_norm
-    k2_rand = norm.rvs(loc=k2_rand, scale=sigma_k2)   # normalization done later, like paper
+    k2_rand = norm.rvs(loc=k2_rand, scale=sigma_k2)
 
     return R_rand, M_rand, k2_rand
 
@@ -498,6 +789,28 @@ def data_generator_k2(R_rand, M_rand, k2_rand, data_matrix, idx_max, TOT, sigma_
 
 
 def generate_mrk2_dataset(source_dir, dataset_k2_path, rho_matrix, cs_matrix, ns=100, TOT=30):
+    """
+    This function generates the mass-radius-k2 dataset from the data containing the solved TOV equations.
+    Here, the function reads the TOV files and generates random mass-radius-k2 samples for all files. 
+    Subsequently, these files are combined with the EOS parameters and then saved.
+
+    Parameters
+    source_dir: str
+        Directory of saved TOV files.
+    dataset_k2_path: str
+        Path of final dataset.
+    rho_matrix: ndarray
+        Matrix containing density values.
+    cs_matrix: ndarray
+        Matrix containing speed of sound values.
+    ns: int
+        Number of samples per TOV file.
+    TOT: int
+        Amount of mass-radius-k2 points per sample.
+
+    Returns
+        None
+    """
     sigma_k2 = 0.05
     sigma_M = 0.1
     sigma_R = 0.5
@@ -523,7 +836,7 @@ def generate_mrk2_dataset(source_dir, dataset_k2_path, rho_matrix, cs_matrix, ns
 
         idx_max = np.argmax(TOV_matrix[:, 1])
 
-        for _ in range(ns):
+        for i in range(ns):
             R_rand = np.array([])
             M_rand = np.array([])
             k2_rand = np.array([])
@@ -537,7 +850,7 @@ def generate_mrk2_dataset(source_dir, dataset_k2_path, rho_matrix, cs_matrix, ns
             row = np.concatenate([
                 np.array([eos_name, Lambda_temp], dtype=object),
                 rho_matrix[z - 1, :],
-                cs_matrix[z - 1, :],
+                cs_matrix[z-1, :],
                 M_rand,
                 R_rand,
                 k2_rand
